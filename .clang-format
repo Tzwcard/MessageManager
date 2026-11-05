@@ -1,0 +1,150 @@
+---
+# 模拟 Visual Studio 2022 默认 C++ 格式化行为（Tools > Options > Text Editor > C/C++ > Formatting）
+# 需要 clang-format >= 14（本机为 18.1.3）
+Language: Cpp
+BasedOnStyle: Microsoft
+
+# --- 缩进 ---
+IndentWidth: 4            # VS 默认：4 个空格
+TabWidth: 4
+UseTab: Never             # VS 默认：插入空格
+AccessModifierOffset: -4  # public:/private: 与 class 对齐（VS 默认顶格）
+IndentAccessModifiers: false
+IndentCaseLabels: false   # case 与 switch 同层，不额外缩进
+IndentCaseBlocks: false
+IndentGotoLabels: true
+IndentPPDirectives: None  # 预处理指令顶格
+NamespaceIndentation: None
+LambdaBodyIndentation: Signature
+ConstructorInitializerIndentWidth: 4
+ContinuationIndentWidth: 4
+
+# --- 大括号：全 Allman（换行）---
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel: false
+  AfterClass: true
+  AfterControlStatement: Always   # if/for/while/switch 的 { 另起一行
+  AfterEnum: true
+  AfterExternBlock: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterObjCDeclaration: true
+  AfterStruct: true
+  AfterUnion: true
+  BeforeCatch: true               # } 后 catch 另起一行
+  BeforeElse: true                # } 后 else 另起一行
+  BeforeLambdaBody: false         # lambda 的 { 与签名同行
+  BeforeWhile: false              # do { } while 的 while 与 } 同行
+  IndentBraces: false
+  SplitEmptyFunction: true        # void f() {} -> 大括号拆成多行
+  SplitEmptyRecord: true
+  SplitEmptyNamespace: true
+
+# --- 换行 / 列宽 ---
+# VS 不会按固定列宽自动折行（只保留你手写的换行），所以设为 0 = 不强制折行。
+# 如果你希望像 clang-format 常见配置那样限制行宽，把下面改成 120 或 100。
+ColumnLimit: 0
+BreakBeforeBinaryOperators: None
+BreakBeforeTernaryOperators: true
+BreakBeforeConceptDeclarations: Always
+BreakConstructorInitializers: BeforeColon
+BreakInheritanceList: BeforeColon
+BreakStringLiterals: true
+AlwaysBreakTemplateDeclarations: MultiLine
+BreakAdjacentStringLiterals: true
+BreakArrays: true
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+BinPackArguments: true
+BinPackParameters: true
+PackConstructorInitializers: BinPack
+PenaltyReturnTypeOnItsOwnLine: 1000
+
+# --- 短语句：VS 不会把多行合成一行，也不会拆开你写成一行的小语句 ---
+AllowShortFunctionsOnASingleLine: None
+AllowShortBlocksOnASingleLine: Never
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+InsertBraces: false
+RemoveBracesLLVM: false
+RemoveSemicolon: false
+
+# --- 指针 / 引用 ---
+# VS 默认把 * & 靠右贴在类型上：int* p、std::string& s
+# 想改成现在代码里的 int *p 风格，把下面两行改成 Pointer / Right
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+DerivePointerAlignment: false
+SpaceAroundPointerQualifiers: Default
+
+# --- 空格 ---
+SpaceBeforeParens: ControlStatements   # if (x) 有空格，func(x) 没有
+SpaceBeforeParensOptions:
+  AfterControlStatements: true
+  AfterForeachMacros: true
+  AfterFunctionDeclarationName: false
+  AfterFunctionDefinitionName: false
+  AfterIfMacros: true
+  AfterOverloadedOperator: false
+  AfterPlacementOperator: true
+  AfterRequiresInClause: false
+  AfterRequiresInExpression: false
+  BeforeNonEmptyParentheses: false
+SpaceAfterCStyleCast: false            # (int)x，不写成 (int) x
+SpaceAfterLogicalNot: false
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceBeforeSquareBrackets: false
+SpacesInAngles: Never
+SpacesInParens: Never
+SpacesInParensOptions:
+  InCStyleCasts: false
+  InConditionalStatements: false
+  InEmptyParentheses: false
+  Other: false
+SpacesInSquareBrackets: false
+SpacesInContainerLiterals: true
+SpacesBeforeTrailingComments: 1
+SpaceInEmptyBlock: false
+SpaceBeforeCpp11BracedList: false
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
+SpaceAfterTemplateKeyword: true
+BitFieldColonSpacing: Both
+
+# --- 对齐：VS 不做这些对齐 ---
+AlignConsecutiveAssignments:
+  Enabled: false
+AlignConsecutiveDeclarations:
+  Enabled: false
+AlignConsecutiveMacros:
+  Enabled: false
+AlignConsecutiveBitFields:
+  Enabled: false
+AlignTrailingComments: false
+AlignOperands: Align
+AlignAfterOpenBracket: Align
+AlignEscapedNewlines: Right
+AlignArrayOfStructures: None
+
+# --- include / 注释 / 空行：VS 不会擅自重排 ---
+SortIncludes: Never
+IncludeBlocks: Preserve
+FixNamespaceComments: false
+ReflowComments: true
+QualifierAlignment: Leave
+EmptyLineBeforeAccessModifier: Leave
+EmptyLineAfterAccessModifier: Never
+KeepEmptyLinesAtTheStartOfBlocks: true
+KeepEmptyLinesAtEOF: false
+MaxEmptyLinesToKeep: 2
+SeparateDefinitionBlocks: Leave
+InsertNewlineAtEOF: false
+LineEnding: DeriveLF
+
+Standard: c++17
+...
