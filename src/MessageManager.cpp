@@ -184,7 +184,18 @@ int MessageManager::send(uint16_t cmd, const Payload& payload, SendMode mode,
     FillHeader(hdr, _config, MessageType::Call, cmd, seq,
                mode == SendMode::OneWay ? IPC_FLAG_NO_RESPONSE : 0, 0);
 
-    if (!push_outbound(detail::EncodeFrame(hdr, payload)))
+    std::vector<uint8_t> frame = detail::EncodeFrame(hdr, payload);
+    if (frame.empty())
+    {
+        if (mode == SendMode::Request)
+        {
+            std::lock_guard<std::mutex> lock(_pending_mutex);
+            _pending.erase(seq);
+        }
+        return static_cast<int>(Status::INVALID);
+    }
+
+    if (!push_outbound(std::move(frame)))
     {
         if (mode == SendMode::Request)
         {
@@ -298,7 +309,10 @@ int MessageManager::reply_impl(MessageId call_id, uint16_t cmd,
     FillHeader(hdr, _config, MessageType::Response, cmd,
                static_cast<uint16_t>(call_id), flag, code);
 
-    if (!push_outbound(detail::EncodeFrame(hdr, payload)))
+    std::vector<uint8_t> frame = detail::EncodeFrame(hdr, payload);
+    if (frame.empty())
+        return static_cast<int>(Status::INVALID);
+    if (!push_outbound(std::move(frame)))
         return static_cast<int>(_closed.load() ? Status::CLOSED : Status::BUSY);
     return 0;
 }
@@ -331,7 +345,10 @@ int MessageManager::notify(uint16_t cmd, const Payload& payload)
     detail::IpcHeader hdr;
     FillHeader(hdr, _config, MessageType::Notify, cmd, seq, 0, 0);
 
-    if (!push_outbound(detail::EncodeFrame(hdr, payload)))
+    std::vector<uint8_t> frame = detail::EncodeFrame(hdr, payload);
+    if (frame.empty())
+        return static_cast<int>(Status::INVALID);
+    if (!push_outbound(std::move(frame)))
         return static_cast<int>(_closed.load() ? Status::CLOSED : Status::BUSY);
     return 0;
 }
@@ -619,7 +636,10 @@ int MessageManager::enqueue_error_response(uint16_t seq_id, uint16_t cmd,
                IPC_FLAG_ERROR, error_code);
 
     const std::string message = text ? text : "";
-    if (!push_outbound(detail::EncodeFrame(hdr, message)))
+    std::vector<uint8_t> frame = detail::EncodeFrame(hdr, message);
+    if (frame.empty())
+        return static_cast<int>(Status::INVALID);
+    if (!push_outbound(std::move(frame)))
         return static_cast<int>(Status::BUSY);
     return 0;
 }

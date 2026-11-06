@@ -167,8 +167,7 @@ uint32_t PayloadValue(const MM::Payload& payload)
 
 MM::detail::IpcHeader MakeHeader(const char* magic, uint8_t version,
                                  MM::MessageType type, uint16_t cmd,
-                                 uint16_t seq_id, uint8_t flag, uint8_t code,
-                                 uint32_t payload_size)
+                                 uint16_t seq_id, uint8_t flag, uint8_t code)
 {
     MM::detail::IpcHeader hdr{};
     std::memcpy(hdr.magic, magic, 4);
@@ -178,8 +177,17 @@ MM::detail::IpcHeader MakeHeader(const char* magic, uint8_t version,
     hdr.seq_id = seq_id;
     hdr.flag = flag;
     hdr.code = code;
-    hdr.sz_payload = payload_size;
     return hdr;
+}
+
+uint32_t ReadSizePrefix(const std::vector<uint8_t>& frame)
+{
+    if (frame.size() < MM::IPC_LENGTH_PREFIX_SIZE)
+        return 0;
+    return static_cast<uint32_t>(frame[0]) |
+           (static_cast<uint32_t>(frame[1]) << 8) |
+           (static_cast<uint32_t>(frame[2]) << 16) |
+           (static_cast<uint32_t>(frame[3]) << 24);
 }
 
 // ---------------------------------------------------------------------------
@@ -198,36 +206,29 @@ void TestDefaultConfig()
 void TestFramingEncoding()
 {
     const MM::detail::IpcHeader hdr =
-        MakeHeader("TEST", 7, MM::MessageType::Call, 0x1234, 0x0102, 0x04, 0x03, 2);
-
-    uint8_t bytes[MM::IPC_HEADER_SIZE]{};
-    MM::detail::EncodeHeader(hdr, bytes);
-
-    CHECK(bytes[0] == 'T' && bytes[1] == 'E' && bytes[2] == 'S' && bytes[3] == 'T');
-    CHECK(bytes[4] == 7);
-    CHECK(bytes[5] == 0);
-    CHECK(bytes[6] == 0x34 && bytes[7] == 0x12);
-    CHECK(bytes[8] == 0x02 && bytes[9] == 0x01);
-    CHECK(bytes[10] == 0x04 && bytes[11] == 0x03);
-    CHECK(bytes[12] == 2 && bytes[13] == 0 && bytes[14] == 0 && bytes[15] == 0);
-
-    MM::detail::IpcHeader decoded{};
-    MM::detail::DecodeHeader(bytes, decoded);
-    CHECK(std::memcmp(decoded.magic, "TEST", 4) == 0);
-    CHECK(decoded.ver == 7);
-    CHECK(decoded.type == 0);
-    CHECK(decoded.cmd == 0x1234);
-    CHECK(decoded.seq_id == 0x0102);
-    CHECK(decoded.flag == 0x04);
-    CHECK(decoded.code == 0x03);
-    CHECK(decoded.sz_payload == 2);
-
+        MakeHeader("TEST", 7, MM::MessageType::Call, 0x1234, 0x0102, 0x04, 0x03);
     const MM::Payload payload = {0x00, 0xFF, 0x10};
-    const std::vector<uint8_t> frame =
-        MM::detail::EncodeFrame(MakeHeader("TEST", 1, MM::MessageType::Call,
-                                           0x0301, 1, 0, 0, 0),
-                                payload);
-    CHECK(frame.size() == MM::IPC_HEADER_SIZE + payload.size());
+    const std::vector<uint8_t> frame = MM::detail::EncodeFrame(hdr, payload);
+
+    CHECK(frame.size() >= MM::IPC_LENGTH_PREFIX_SIZE);
+    const uint32_t size = ReadSizePrefix(frame);
+    CHECK(size > 0);
+    CHECK(frame.size() == MM::IPC_LENGTH_PREFIX_SIZE + size);
+
+    MM::detail::FrameParser parser({'T', 'E', 'S', 'T'}, 7,
+                                   static_cast<uint32_t>(MM::IPC_MAX_PAYLOAD));
+    parser.append(frame.data(), frame.size());
+
+    MM::detail::Frame parsed;
+    CHECK(parser.next(parsed) == MM::detail::ParsedFrame::OK);
+    CHECK(std::memcmp(parsed.hdr.magic, "TEST", 4) == 0);
+    CHECK(parsed.hdr.ver == 7);
+    CHECK(parsed.hdr.type == 0);
+    CHECK(parsed.hdr.cmd == 0x1234);
+    CHECK(parsed.hdr.seq_id == 0x0102);
+    CHECK(parsed.hdr.flag == 0x04);
+    CHECK(parsed.hdr.code == 0x03);
+    CHECK(parsed.payload == payload);
 }
 
 void TestFramingIncremental()
@@ -238,11 +239,11 @@ void TestFramingIncremental()
     const MM::Payload payload1 = {1, 2, 3};
     const std::vector<uint8_t> frame1 =
         MM::detail::EncodeFrame(MakeHeader("TEST", 1, MM::MessageType::Call,
-                                           0x0011, 1, 0, 0, 0),
+                                           0x0011, 1, 0, 0),
                                 payload1);
     const std::vector<uint8_t> frame2 =
         MM::detail::EncodeFrame(MakeHeader("TEST", 1, MM::MessageType::Notify,
-                                           0x0022, 0x8001, 0, 0, 0),
+                                           0x0022, 0x8001, 0, 0),
                                 MM::Payload{});
 
     std::vector<uint8_t> all = frame1;
@@ -289,52 +290,97 @@ void TestFramingErrors()
     struct Case
     {
         MM::detail::IpcHeader hdr;
+        MM::Payload payload;
+        uint32_t max_payload;
         MM::ErrorCode expected;
     };
 
+    const uint32_t max_payload =
+        static_cast<uint32_t>(MM::IPC_MAX_PAYLOAD);
+
     const Case cases[] = {
-        {MakeHeader("BAD!", 1, MM::MessageType::Call, 1, 1, 0, 0, 0),
+        {MakeHeader("BAD!", 1, MM::MessageType::Call, 1, 1, 0, 0),
+         {},
+         max_payload,
          MM::ErrorCode::MAGIC_MISMATCH},
-        {MakeHeader("TEST", 2, MM::MessageType::Call, 1, 1, 0, 0, 0),
+        {MakeHeader("TEST", 2, MM::MessageType::Call, 1, 1, 0, 0),
+         {},
+         max_payload,
          MM::ErrorCode::UNSUPPORTED_VERSION},
-        {MakeHeader("TEST", 1, static_cast<MM::MessageType>(3), 1, 1, 0, 0, 0),
+        {MakeHeader("TEST", 1, static_cast<MM::MessageType>(3), 1, 1, 0, 0),
+         {},
+         max_payload,
          MM::ErrorCode::INVALID_ARGUMENT},
-        {MakeHeader("TEST", 1, MM::MessageType::Call, 1, 0x8001, 0, 0, 0),
+        {MakeHeader("TEST", 1, MM::MessageType::Call, 1, 0x8001, 0, 0),
+         {},
+         max_payload,
          MM::ErrorCode::INVALID_ARGUMENT},
-        {MakeHeader("TEST", 1, MM::MessageType::Notify, 1, 1, 0, 0, 0),
+        {MakeHeader("TEST", 1, MM::MessageType::Notify, 1, 1, 0, 0),
+         {},
+         max_payload,
          MM::ErrorCode::INVALID_ARGUMENT},
-        {MakeHeader("TEST", 1, MM::MessageType::Call, 1, 0, 0, 0, 0),
+        {MakeHeader("TEST", 1, MM::MessageType::Call, 1, 0, 0, 0),
+         {},
+         max_payload,
          MM::ErrorCode::INVALID_ARGUMENT},
-        {MakeHeader("TEST", 1, MM::MessageType::Call, 1, 1, 0, 0,
-                    static_cast<uint32_t>(MM::IPC_MAX_PAYLOAD) + 1),
+        {MakeHeader("TEST", 1, MM::MessageType::Call, 1, 1, 0, 0),
+         {1, 2, 3},
+         2,
          MM::ErrorCode::INVALID_ARGUMENT},
     };
 
     for (const Case& item : cases)
     {
         MM::detail::FrameParser parser({'T', 'E', 'S', 'T'}, 1,
-                                       static_cast<uint32_t>(MM::IPC_MAX_PAYLOAD));
+                                       item.max_payload);
+        const std::vector<uint8_t> frame =
+            MM::detail::EncodeFrame(item.hdr, item.payload);
+        parser.append(frame.data(), frame.size());
 
-        uint8_t bytes[MM::IPC_HEADER_SIZE]{};
-        MM::detail::EncodeHeader(item.hdr, bytes);
-        parser.append(bytes, sizeof(bytes));
-
-        MM::detail::Frame frame;
-        const MM::detail::ParsedFrame parsed = parser.next(frame);
-        CHECK(parsed == MM::detail::ParsedFrame::ERROR);
+        MM::detail::Frame frame_out;
+        CHECK(parser.next(frame_out) == MM::detail::ParsedFrame::ERROR);
         CHECK(parser.error_code() == item.expected);
         CHECK(parser.has_header());
         CHECK(parser.last_header().cmd == item.hdr.cmd);
         CHECK(parser.last_header().seq_id == item.hdr.seq_id);
     }
 
-    // header 不足 16 字节时不能报错，只能 NEED_MORE。
-    MM::detail::FrameParser short_parser({'T', 'E', 'S', 'T'}, 1, 1024);
-    const uint8_t partial[8] = {'T', 'E', 'S', 'T', 1, 0, 0x01, 0x00};
-    short_parser.append(partial, sizeof(partial));
+    auto expect_raw_error = [](const std::vector<uint8_t>& raw,
+                               MM::ErrorCode expected, bool has_header) {
+        MM::detail::FrameParser parser({'T', 'E', 'S', 'T'}, 1,
+                                       static_cast<uint32_t>(
+                                           MM::IPC_MAX_PAYLOAD));
+        parser.append(raw.data(), raw.size());
+        MM::detail::Frame frame;
+        CHECK(parser.next(frame) == MM::detail::ParsedFrame::ERROR);
+        CHECK(parser.error_code() == expected);
+        CHECK(parser.has_header() == has_header);
+    };
 
-    MM::detail::Frame frame;
-    CHECK(short_parser.next(frame) == MM::detail::ParsedFrame::NEED_MORE);
+    expect_raw_error({4, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF},
+                     MM::ErrorCode::INVALID_ARGUMENT, false);
+    expect_raw_error({0, 0, 0, 0}, MM::ErrorCode::INVALID_ARGUMENT, false);
+
+    const uint32_t too_big =
+        static_cast<uint32_t>(MM::IPC_MAX_FRAME_SIZE) + 1;
+    expect_raw_error({static_cast<uint8_t>(too_big & 0xFF),
+                      static_cast<uint8_t>((too_big >> 8) & 0xFF),
+                      static_cast<uint8_t>((too_big >> 16) & 0xFF),
+                      static_cast<uint8_t>((too_big >> 24) & 0xFF)},
+                     MM::ErrorCode::INVALID_ARGUMENT, false);
+
+    // 任意截断位置都必须只返回 NEED_MORE。
+    const std::vector<uint8_t> complete =
+        MM::detail::EncodeFrame(MakeHeader("TEST", 1, MM::MessageType::Call,
+                                           1, 1, 0, 0),
+                                MM::Payload{1, 2, 3});
+    for (size_t cut = 0; cut < complete.size(); ++cut)
+    {
+        MM::detail::FrameParser parser({'T', 'E', 'S', 'T'}, 1, max_payload);
+        parser.append(complete.data(), cut);
+        MM::detail::Frame frame;
+        CHECK(parser.next(frame) == MM::detail::ParsedFrame::NEED_MORE);
+    }
 }
 
 bool WriteAll(MM::CUnixSocksTransport& transport,
@@ -426,16 +472,16 @@ void TestFramingErrorReplyCommand()
 {
     // magic / ver / 保留 cmd 都由 framing 层回 cmd=0x0000。
     CheckFramingErrorReply(
-        MakeHeader("BAD!", 1, MM::MessageType::Call, 0x1234, 1, 0, 0, 0),
+        MakeHeader("BAD!", 1, MM::MessageType::Call, 0x1234, 1, 0, 0),
         MM::ErrorCode::MAGIC_MISMATCH);
 
     CheckFramingErrorReply(
-        MakeHeader("TEST", 2, MM::MessageType::Call, 0x1234, 1, 0, 0, 0),
+        MakeHeader("TEST", 2, MM::MessageType::Call, 0x1234, 1, 0, 0),
         MM::ErrorCode::UNSUPPORTED_VERSION);
 
     CheckFramingErrorReply(
         MakeHeader("TEST", 1, MM::MessageType::Call,
-                   MM::IPC_CMD_GENERAL_ERROR, 1, 0, 0, 0),
+                   MM::IPC_CMD_GENERAL_ERROR, 1, 0, 0),
         MM::ErrorCode::INVALID_ARGUMENT);
 }
 

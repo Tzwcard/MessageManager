@@ -11,13 +11,13 @@
 
 独立于具体 service 的 IPC 子系统：
 
-- wire framing：16 字节 header、增量 parser、magic/ver/type/seq 校验；
+- wire framing：`[u32 size][protobuf ipc_frame]`、增量 parser、magic/ver/type/seq 校验；
 - MessageManager：transport 抽象、队列、request/response 匹配、Notify、线程模型；
-- profile 只定义 `cmd` / payload；MM 不解析 command。
+- profile 只定义 `command` / payload；MM 不解析 command。
 
 产物：
 
-- `libMessageManager.a` / `MessageManager.lib`：core，只依赖 `ITransport`；
+- `libMessageManager.a` / `MessageManager.lib`：core，依赖 `ITransport` + protobuf；
 - `libMessageManagerUnix.a` / `MessageManagerUnix.lib`：可选 AF_UNIX transport；
 - 不需要默认 transport 的 service 只链接 core，自己实现 `ITransport`。
 
@@ -29,6 +29,8 @@ MessageManager/
 ├── MESSAGE_MANAGER.md          # 配置 / API / 队列 / 线程模型
 ├── IPC_COMMANDS.md             # command profile 样例 / 模板
 ├── SAMPLE.md                   # Unix Socks 端到端示例
+├── proto/ipc_frame.proto       # protobuf wire schema
+├── third_party/protobuf/       # git submodule (v33.6)
 ├── include/                    # core 公共头（会被安装）
 │   ├── ITransport.h
 │   ├── MessageDefs.h
@@ -46,10 +48,14 @@ framing 是私有实现；使用方只依赖 `include/` 下的公共头。
 ## 构建 / 测试
 
 ```bash
+git submodule update --init --recursive
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+protobuf 以 submodule 形式固定在 `third_party/protobuf`（v33.6）。
+首次 configure 时 protobuf 会通过 CMake FetchContent 下载 Abseil。
 
 测试覆盖 framing 增量解析、结构校验、request/response、OneWay、
 discard、notify、队列满、magic/ver 错误、连接关闭，以及：
@@ -82,7 +88,7 @@ client.start();
 
 | 文档 | 内容 |
 |---|---|
-| [IPC_FRAMING.md](IPC_FRAMING.md) | wire layout、header、读帧、错误帧 |
+| [IPC_FRAMING.md](IPC_FRAMING.md) | length-prefixed protobuf、字段、读帧、错误帧 |
 | [MESSAGE_MANAGER.md](MESSAGE_MANAGER.md) | 配置、API、队列、线程模型 |
 | [IPC_COMMANDS.md](IPC_COMMANDS.md) | command profile 样例 / 模板 |
 | [SAMPLE.md](SAMPLE.md) | Unix Socks + `MONITOR_SET_MODE` 端到端示例 |
@@ -97,6 +103,6 @@ client.start();
 
 - payload 是不透明字节，MM 不解析 protobuf / JSON / raw text；
 - 1:1 连接，一个 MessageManager 对应一个 transport；
-- 帧边界由 `sz_payload` 决定；
+- 帧边界由 4 字节 size 前缀决定；
 - `send` / `recv` / `fetch_*` 都是 async、非阻塞的；
 - `magic` / `ver` 不匹配时回 error，然后关闭连接。

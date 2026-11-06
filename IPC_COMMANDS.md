@@ -21,7 +21,7 @@
 
 | 层 | 负责 |
 |---|---|
-| MessageManager | header、magic/ver、type、seq_id、flag/code、payload 长度、队列、匹配 |
+| MessageManager | length prefix、magic/ver、type、seq_id、flag/code、队列、匹配 |
 | profile / service | `cmd` 表、payload schema、错误码含义、超时、OneWay / Notify 选择 |
 | transport | 连接建立、非阻塞 read/write、wait/wake、close |
 
@@ -116,7 +116,7 @@ payload 格式错误由 profile 自己校验；MM 只当作不透明字节。
 
 ## 6. flag / code
 
-wire 上是两个独立字节：
+`flag` / `code` 是两个独立字段：
 
 ```text
 flag bit0    IPC_FLAG_NO_RESPONSE

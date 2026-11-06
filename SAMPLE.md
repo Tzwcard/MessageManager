@@ -173,15 +173,20 @@ const std::string mode = request(Command::MONITOR_GET_MODE);
 ## Wire
 
 ```text
-Call:      type=0  cmd=0x0101  seq=1  flag=0  code=0  payload="MODE=MIRROR"
-Response:  type=1  cmd=0x0101  seq=1  flag=0  code=0  payload="OKAY"
+[u32 size][ipc_frame]
+size = serialized ipc_frame length
+```
 
-Call:      type=0  cmd=0x0102  seq=2  flag=0  code=0  payload=""
-Response:  type=1  cmd=0x0102  seq=2  flag=0  code=0  payload="WORKING"
-Response:  type=1  cmd=0x0102  seq=3  flag=0  code=0  payload="DONE"
+```text
+Call:      ipc_frame{magic="MON!",ver=1,type=0,command=0x0101,seq_id=1,flag=0,code=0,payload="MODE=MIRROR"}
+Response:  ipc_frame{magic="MON!",ver=1,type=1,command=0x0101,seq_id=1,flag=0,code=0,payload="OKAY"}
 
-Call:      type=0  cmd=0x0103  seq=4  flag=0  code=0  payload=""
-Response:  type=1  cmd=0x0103  seq=4  flag=0  code=0  payload="MIRROR"
+Call:      ipc_frame{magic="MON!",ver=1,type=0,command=0x0102,seq_id=2,flag=0,code=0,payload=""}
+Response:  ipc_frame{magic="MON!",ver=1,type=1,command=0x0102,seq_id=2,flag=0,code=0,payload="WORKING"}
+Response:  ipc_frame{magic="MON!",ver=1,type=1,command=0x0102,seq_id=3,flag=0,code=0,payload="DONE"}
+
+Call:      ipc_frame{magic="MON!",ver=1,type=0,command=0x0103,seq_id=4,flag=0,code=0,payload=""}
+Response:  ipc_frame{magic="MON!",ver=1,type=1,command=0x0103,seq_id=4,flag=0,code=0,payload="MIRROR"}
 ```
 
 ## Link

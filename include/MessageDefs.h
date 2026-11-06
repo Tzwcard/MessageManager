@@ -11,8 +11,10 @@ namespace MessageManager
 // wire 常量（见 IPC_FRAMING.md）
 // ---------------------------------------------------------------------------
 
-constexpr size_t IPC_HEADER_SIZE = 16;
+// frame = [u32 size little-endian][serialized ipc_frame]
+constexpr size_t IPC_LENGTH_PREFIX_SIZE = 4;
 constexpr size_t IPC_MAX_PAYLOAD = 1024 * 1024; // 1 MiB
+constexpr size_t IPC_MAX_FRAME_SIZE = IPC_MAX_PAYLOAD + 1024;
 
 constexpr uint8_t IPC_FLAG_NO_RESPONSE = 0x01;
 constexpr uint8_t IPC_FLAG_ERROR = 0x02;

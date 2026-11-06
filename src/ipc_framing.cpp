@@ -1,5 +1,7 @@
 #include "ipc_framing.h"
 
+#include "ipc_frame.pb.h"
+
 #include <cstring>
 
 namespace MessageManager
@@ -8,18 +10,6 @@ namespace detail
 {
 namespace
 {
-void PutU16(uint8_t* out, uint16_t value)
-{
-    out[0] = static_cast<uint8_t>(value & 0xFF);
-    out[1] = static_cast<uint8_t>((value >> 8) & 0xFF);
-}
-
-uint16_t GetU16(const uint8_t* in)
-{
-    return static_cast<uint16_t>(static_cast<uint16_t>(in[0]) |
-                                 (static_cast<uint16_t>(in[1]) << 8));
-}
-
 void PutU32(uint8_t* out, uint32_t value)
 {
     out[0] = static_cast<uint8_t>(value & 0xFF);
@@ -37,39 +27,30 @@ uint32_t GetU32(const uint8_t* in)
 }
 } // namespace
 
-void EncodeHeader(const IpcHeader& hdr, uint8_t out[IPC_HEADER_SIZE])
-{
-    std::memcpy(out, hdr.magic, 4);
-    out[4] = hdr.ver;
-    out[5] = hdr.type;
-    PutU16(out + 6, hdr.cmd);
-    PutU16(out + 8, hdr.seq_id);
-    out[10] = hdr.flag;
-    out[11] = hdr.code;
-    PutU32(out + 12, hdr.sz_payload);
-}
-
-void DecodeHeader(const uint8_t in[IPC_HEADER_SIZE], IpcHeader& hdr)
-{
-    std::memcpy(hdr.magic, in, 4);
-    hdr.ver = in[4];
-    hdr.type = in[5];
-    hdr.cmd = GetU16(in + 6);
-    hdr.seq_id = GetU16(in + 8);
-    hdr.flag = in[10];
-    hdr.code = in[11];
-    hdr.sz_payload = GetU32(in + 12);
-}
-
 std::vector<uint8_t> EncodeFrame(const IpcHeader& hdr, const Payload& payload)
 {
-    IpcHeader wire = hdr;
-    wire.sz_payload = static_cast<uint32_t>(payload.size());
+    msgmgr::ipc::ipc_frame wire;
+    wire.set_magic(hdr.magic, 4);
+    wire.set_ver(hdr.ver);
+    wire.set_type(hdr.type);
+    wire.set_command(hdr.cmd);
+    wire.set_seq_id(hdr.seq_id);
+    wire.set_flag(hdr.flag);
+    wire.set_code(hdr.code);
 
-    std::vector<uint8_t> out(IPC_HEADER_SIZE + payload.size());
-    EncodeHeader(wire, out.data());
     if (!payload.empty())
-        std::memcpy(out.data() + IPC_HEADER_SIZE, payload.data(), payload.size());
+        wire.set_payload(payload.data(), payload.size());
+
+    std::string body;
+    if (!wire.SerializeToString(&body))
+        return {};
+
+    if (body.size() > IPC_MAX_FRAME_SIZE)
+        return {};
+
+    std::vector<uint8_t> out(kLengthPrefixSize + body.size());
+    PutU32(out.data(), static_cast<uint32_t>(body.size()));
+    std::memcpy(out.data() + kLengthPrefixSize, body.data(), body.size());
     return out;
 }
 
@@ -114,7 +95,6 @@ void FrameParser::compact()
         return;
     }
 
-    // 只有已消费的前缀足够大时才搬移，避免每帧都 erase。
     if (_off >= 64 * 1024 && _off * 2 >= _buf.size())
     {
         _buf.erase(_buf.begin(), _buf.begin() + static_cast<std::ptrdiff_t>(_off));
@@ -133,52 +113,72 @@ ParsedFrame FrameParser::next(Frame& out)
 {
     _has_header = false;
 
-    // 1. 读满 16 字节 header。
-    if (available() < IPC_HEADER_SIZE)
+    if (available() < kLengthPrefixSize)
         return ParsedFrame::NEED_MORE;
 
-    IpcHeader hdr{};
-    DecodeHeader(_buf.data() + _off, hdr);
-    _last_header = hdr;
+    const uint32_t size = GetU32(_buf.data() + _off);
+    if (size == 0 || size > IPC_MAX_FRAME_SIZE)
+        return fail(ErrorCode::INVALID_ARGUMENT, "invalid frame size");
+
+    if (available() < kLengthPrefixSize + size)
+        return ParsedFrame::NEED_MORE;
+
+    msgmgr::ipc::ipc_frame wire;
+    const uint8_t* body = _buf.data() + _off + kLengthPrefixSize;
+    if (!wire.ParseFromArray(body, static_cast<int>(size)))
+        return fail(ErrorCode::INVALID_ARGUMENT, "invalid protobuf frame");
+
+    // Fill a best-effort header first; it is also used by error replies.
+    if (wire.magic().size() == 4)
+    {
+        std::memcpy(_last_header.magic, wire.magic().data(), 4);
+    }
+    _last_header.ver = static_cast<uint8_t>(wire.ver());
+    _last_header.type = static_cast<uint8_t>(wire.type());
+    _last_header.cmd = static_cast<uint16_t>(wire.command());
+    _last_header.seq_id = static_cast<uint16_t>(wire.seq_id());
+    _last_header.flag = static_cast<uint8_t>(wire.flag());
+    _last_header.code = static_cast<uint8_t>(wire.code());
     _has_header = true;
 
-    // 2. 结构校验。
-    if (std::memcmp(hdr.magic, _magic.data(), 4) != 0)
+    if (wire.ver() > 0xFF || wire.type() > 0xFF ||
+        wire.flag() > 0xFF || wire.code() > 0xFF ||
+        wire.command() > 0xFFFF || wire.seq_id() > 0xFFFF)
+    {
+        return fail(ErrorCode::INVALID_ARGUMENT, "field out of range");
+    }
+
+    if (wire.magic().size() != 4)
+        return fail(ErrorCode::INVALID_ARGUMENT, "invalid magic length");
+
+    if (std::memcmp(wire.magic().data(), _magic.data(), 4) != 0)
         return fail(ErrorCode::MAGIC_MISMATCH, "magic mismatch");
 
-    if (hdr.ver != _version)
+    if (wire.ver() != _version)
         return fail(ErrorCode::UNSUPPORTED_VERSION, "unsupported version");
 
-    if (hdr.type > static_cast<uint8_t>(MessageType::Notify))
+    if (wire.type() > static_cast<uint32_t>(MessageType::Notify))
         return fail(ErrorCode::INVALID_ARGUMENT, "invalid message type");
 
-    if (hdr.seq_id == 0 || hdr.seq_id == IPC_SEQ_NOTIFY_MASK)
+    if (wire.seq_id() == 0 || wire.seq_id() == IPC_SEQ_NOTIFY_MASK)
         return fail(ErrorCode::INVALID_ARGUMENT, "reserved seq_id");
 
-    if ((hdr.type == static_cast<uint8_t>(MessageType::Notify)) !=
-        IsNotifySeq(hdr.seq_id))
+    if ((wire.type() == static_cast<uint32_t>(MessageType::Notify)) !=
+        IsNotifySeq(static_cast<uint16_t>(wire.seq_id())))
         return fail(ErrorCode::INVALID_ARGUMENT, "type/seq_id mismatch");
 
-    // 0x0000 只用于 framing error 的 Response；
-    // Call / Notify 不能把它当业务命令。
-    if (hdr.type != static_cast<uint8_t>(MessageType::Response) &&
-        IsGeneralErrorCmd(hdr.cmd))
+    if (wire.type() != static_cast<uint32_t>(MessageType::Response) &&
+        IsGeneralErrorCmd(static_cast<uint16_t>(wire.command())))
         return fail(ErrorCode::INVALID_ARGUMENT, "reserved command");
 
-    if (hdr.sz_payload > _max_payload || hdr.sz_payload > IPC_MAX_PAYLOAD)
+    if (wire.payload().size() > _max_payload ||
+        wire.payload().size() > IPC_MAX_PAYLOAD)
         return fail(ErrorCode::INVALID_ARGUMENT, "payload too large");
 
-    // 3. 等够整帧。
-    const size_t frame_size = IPC_HEADER_SIZE + static_cast<size_t>(hdr.sz_payload);
-    if (available() < frame_size)
-        return ParsedFrame::NEED_MORE;
+    out.hdr = _last_header;
+    out.payload.assign(wire.payload().begin(), wire.payload().end());
 
-    // 4. 产出完整 frame。
-    out.hdr = hdr;
-    const uint8_t* begin = _buf.data() + _off + IPC_HEADER_SIZE;
-    out.payload.assign(begin, begin + hdr.sz_payload);
-
-    _off += frame_size;
+    _off += kLengthPrefixSize + size;
     compact();
     return ParsedFrame::OK;
 }

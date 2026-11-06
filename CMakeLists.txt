@@ -12,19 +12,60 @@ if(MSVC)
 endif()
 
 # ---------------------------------------------------------------------------
+# Bundled protobuf (pinned submodule).
+# ---------------------------------------------------------------------------
+set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_CONFORMANCE OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(protobuf_INSTALL OFF CACHE BOOL "" FORCE)
+set(protobuf_MSVC_STATIC_RUNTIME ON CACHE BOOL "" FORCE)
+set(protobuf_WITH_ZLIB OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_PROTOC_BINARIES ON CACHE BOOL "" FORCE)
+set(protobuf_FORCE_FETCH_DEPENDENCIES ON CACHE BOOL "" FORCE)
+
+add_subdirectory(third_party/protobuf EXCLUDE_FROM_ALL)
+
+# ---------------------------------------------------------------------------
+# Generate ipc_frame.pb.cc/h from proto/ipc_frame.proto.
+# ---------------------------------------------------------------------------
+set(MM_PROTO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/proto)
+set(MM_PROTO_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+set(MM_PROTO_SRC ${MM_PROTO_GEN_DIR}/ipc_frame.pb.cc)
+set(MM_PROTO_HDR ${MM_PROTO_GEN_DIR}/ipc_frame.pb.h)
+
+file(MAKE_DIRECTORY ${MM_PROTO_GEN_DIR})
+
+add_custom_command(
+    OUTPUT ${MM_PROTO_SRC} ${MM_PROTO_HDR}
+    COMMAND $<TARGET_FILE:protobuf::protoc>
+            --cpp_out=${MM_PROTO_GEN_DIR}
+            -I${MM_PROTO_DIR}
+            ${MM_PROTO_DIR}/ipc_frame.proto
+    DEPENDS protobuf::protoc ${MM_PROTO_DIR}/ipc_frame.proto
+    COMMENT "Generating ipc_frame.pb.cc/h"
+    VERBATIM
+)
+
+add_custom_target(mm_proto_gen DEPENDS ${MM_PROTO_SRC} ${MM_PROTO_HDR})
+
+# ---------------------------------------------------------------------------
 # Core: framing + queues + request/response matching.
-# It only depends on the ITransport interface; no socket / poll / winsock.
+# It depends on protobuf for the wire body; transport remains abstract.
 # ---------------------------------------------------------------------------
 add_library(MessageManager STATIC
     src/ipc_framing.cpp
     src/MessageManager.cpp
+    ${MM_PROTO_SRC}
 )
 
 add_library(MessageManager::MessageManager ALIAS MessageManager)
+add_dependencies(MessageManager mm_proto_gen)
 
 target_include_directories(MessageManager
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+    PRIVATE ${MM_PROTO_GEN_DIR}
 )
 
 target_compile_options(MessageManager PRIVATE
@@ -32,7 +73,7 @@ target_compile_options(MessageManager PRIVATE
 )
 
 find_package(Threads REQUIRED)
-target_link_libraries(MessageManager PUBLIC Threads::Threads)
+target_link_libraries(MessageManager PUBLIC Threads::Threads protobuf::libprotobuf)
 
 set_target_properties(MessageManager PROPERTIES
     OUTPUT_NAME MessageManager
@@ -48,6 +89,10 @@ install(TARGETS MessageManager
 install(DIRECTORY include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     FILES_MATCHING PATTERN "*.h"
+)
+
+install(FILES proto/ipc_frame.proto
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/msgmgr
 )
 
 # ---------------------------------------------------------------------------

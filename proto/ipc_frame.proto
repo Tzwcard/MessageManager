@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package msgmgr.ipc;
+
+// Wire body of one IPC frame.
+//
+// Outer framing: [u32 size little-endian][serialized ipc_frame]...
+// size is the serialized size of ipc_frame, not including the 4-byte prefix.
+message ipc_frame
+{
+    bytes  magic   = 1; // exactly 4 bytes; validate at runtime
+    uint32 ver     = 2; // uint8 range
+    uint32 type    = 3; // uint8 range: 0=Call, 1=Response, 2=Notify
+    uint32 command = 4; // uint16 range
+    uint32 seq_id  = 5; // uint16 range
+    uint32 flag    = 6; // uint8 range
+    uint32 code    = 7; // uint8 range
+
+    // Opaque bytes: keeps MessageManager's current "payload is bytes" model.
+    bytes  payload = 8;
+}
