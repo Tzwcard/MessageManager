@@ -23,13 +23,18 @@ struct Frame;
 struct IpcHeader;
 } // namespace detail
 
-// 一个 MessageManager 对应一个 transport（1:1）。
+// 一个 MessageManager 对应一个 transport（1:1），只服务一条连接。
 //
 //   Client : send / recv / fetch_notify / discard
 //   Server : fetch_request / reply / reply_error / notify
 //
 // reader 线程只做 framing / 队列 / 匹配，不执行任何业务代码。
 // payload 对 MM 是不透明字节。
+//
+// 生命周期：断开（对端 close / I/O 错误 / 协议错误）或调用 end() 之后，
+// 实例进入终态：assign_transport() 返回 INVALID，start() 返回 CLOSED，
+// 不能通过换 transport / 换 fd 复用。重连必须析构旧实例，用新的
+// MessageManager 绑定新连接。这是 MM 自身的状态机，与 transport 实现无关。
 class MessageManager
 {
 public:

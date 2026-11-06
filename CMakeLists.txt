@@ -103,6 +103,15 @@ install(FILES proto/ipc_frame.proto
 add_subdirectory(transport/unix)
 
 # ---------------------------------------------------------------------------
+# Examples
+# ---------------------------------------------------------------------------
+option(MM_BUILD_EXAMPLES "Build example programs" ON)
+
+if(MM_BUILD_EXAMPLES AND UNIX)
+    add_subdirectory(examples/echo_notify)
+endif()
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 add_executable(message_manager_test

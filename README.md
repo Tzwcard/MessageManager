@@ -13,6 +13,7 @@
 
 - wire framing：`[u32 size][protobuf ipc_frame]`、增量 parser、magic/ver/type/seq 校验；
 - MessageManager：transport 抽象、队列、request/response 匹配、Notify、线程模型；
+  一个实例只服务一条连接，断开 / `end()` 后不可复用，必须重建；
 - profile 只定义 `command` / payload；MM 不解析 command。
 
 产物：
@@ -39,6 +40,7 @@ MessageManager/
 │   ├── ipc_framing.h / .cpp
 │   └── MessageManager.cpp
 ├── transport/unix/             # 默认 AF_UNIX transport（独立 target）
+├── examples/echo_notify/       # 最小 ECHO / NOTIFY server + client
 └── test/
     └── message_manager_test.cpp
 ```

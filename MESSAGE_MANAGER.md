@@ -21,6 +21,60 @@
 - 1:1：一个 MessageManager 对应一个 transport；
 - 多 client 暂不支持；以后再加 ClientRegistry / client_id。
 
+### 生命周期：断开后必须重建（与 transport 无关）
+
+一个 `MessageManager` 实例只服务**一条**连接。连接结束（对端 close /
+I/O 错误 / framing 致命错误 / 自己调用 `end()`）后，实例进入终态：
+
+```text
+_closed = true      （永久）
+_running = false
+                    ↓
+assign_transport()  -> INVALID
+start()             -> CLOSED
+send/reply/notify   -> CLOSED
+fetch_* / recv      -> CLOSED
+```
+
+这是 MM 自身的状态机，**与具体 transport 实现无关**：
+
+- `end()` 本身也是终态：即使连接还活着，调用 `end()` 之后实例也不能再
+  `start()`；
+- `end()` 只负责停止 reader、`shutdown()` + `close()` transport，
+  **不会**把实例重置成可再次 `assign_transport()` 的状态；
+- 不能通过“换一个 transport / 换一个 fd”让旧实例复活；
+- 断开时 `pending`、`request_queue`、`notify_queue`、`outbound_queue`
+  里的消息全部作废，未完成的 Request 需要上层决定是否重发。
+
+重连的唯一合法方式：
+
+```text
+1. 停止并销毁旧 MessageManager
+2. 上层准备好一条新连接对应的 transport
+3. 构造新的 MessageManager，重新 assign_transport() + start()
+```
+
+伪代码（不关心 transport 是怎么来的）：
+
+```cpp
+for (;;)
+{
+    // 上层负责准备新连接：connect / accept / adopt / 自定义 transport
+    ITransport& transport = ...;
+
+    MessageManager mgr(config);
+    mgr.assign_transport(transport);   // 非拥有，transport 必须活得比 mgr 久
+    mgr.start();
+
+    // ... 业务循环 ...
+
+    mgr.end();
+}   // 旧实例在这里析构，下一轮重新构造
+```
+
+transport 本身是否可以复用、如何重新 listen / accept，由具体 transport
+自己的文档定义；MM 只要求“一个实例一条连接”。
+
 ---
 
 ## 2. 配置
